@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/WavToStyleMidi.Cli/WavToStyleMidi.Cli.csproj" />
+    <Project Path="src/WavToStyleMidi.Core/WavToStyleMidi.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/WavToStyleMidi.Core.Tests/WavToStyleMidi.Core.Tests.csproj" />
+  </Folder>
+</Solution>
