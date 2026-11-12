@@ -10,22 +10,29 @@ public sealed class DrumMidiWriter(IOptions<DrumNoteMap> noteMap) : IDrumMidiWri
     private const int NoteLengthTicks = MidiConstants.TicksPerQuarterNote / 8;
     private readonly DrumNoteMap _noteMap = noteMap.Value;
 
-    public byte[] Build(IReadOnlyList<QuantizedHit> hits, TempoInfo tempo, int channel, string trackName)
+    public byte[] Build(IReadOnlyList<QuantizedHit> hits, TempoInfo tempo, int channel, string trackName, int format = 1)
     {
         ArgumentNullException.ThrowIfNull(hits);
         ArgumentNullException.ThrowIfNull(tempo);
         ArgumentOutOfRangeException.ThrowIfLessThan(channel, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(channel, 16);
+        if (format is not (0 or 1))
+        {
+            throw new ArgumentOutOfRangeException(nameof(format), format, "Use 0 or 1.");
+        }
 
         var loopTicks = (long)tempo.Bars * tempo.BeatsPerBar * MidiConstants.TicksPerQuarterNote;
         var status = channel - 1;
 
-        var events = new List<TimedEvent>(hits.Count * 2 + 4)
-        {
+        List<TimedEvent> conductor =
+        [
             new(0, 0, Meta(0x03, Encoding.ASCII.GetBytes(trackName))),
             new(0, 0, Meta(0x51, TempoBytes(tempo.Bpm))),
             new(0, 0, Meta(0x58, TimeSignatureBytes(tempo.BeatsPerBar))),
-        };
+        ];
+
+        // Format 1 (what style converters expect): tempo and meter in track 1, drums in track 2.
+        var drums = format == 0 ? conductor : [new(0, 0, Meta(0x03, Encoding.ASCII.GetBytes("Drums")))];
 
         var nextSameNote = NextTickForSameNote(hits);
         for (var i = 0; i < hits.Count; i++)
@@ -36,13 +43,32 @@ public sealed class DrumMidiWriter(IOptions<DrumNoteMap> noteMap) : IDrumMidiWri
             var off = Math.Min(hit.Tick + NoteLengthTicks, Math.Min(nextSameNote[i], loopTicks));
             off = Math.Max(off, hit.Tick + 1);
 
-            events.Add(new TimedEvent(hit.Tick, 2, [(byte)(0x90 | status), note, velocity]));
-            events.Add(new TimedEvent(off, 1, [(byte)(0x80 | status), note, 0]));
+            drums.Add(new TimedEvent(hit.Tick, 2, [(byte)(0x90 | status), note, velocity]));
+            drums.Add(new TimedEvent(off, 1, [(byte)(0x80 | status), note, 0]));
         }
 
+        var tracks = format == 0 ? [conductor] : new[] { conductor, drums };
+        var endTick = Math.Max(loopTicks, tracks.Max(t => t.Max(e => e.Tick)));
+
+        using var file = new MemoryStream();
+        file.Write("MThd"u8);
+        WriteUInt32(file, 6);
+        WriteUInt16(file, (ushort)format);
+        WriteUInt16(file, (ushort)tracks.Length);
+        WriteUInt16(file, MidiConstants.TicksPerQuarterNote);
+        foreach (var events in tracks)
+        {
+            WriteTrack(file, events, endTick);
+        }
+
+        return file.ToArray();
+    }
+
+    /// <summary>Writes one track chunk. Every track ends exactly at the loop length so the DAW keeps the loop size.</summary>
+    private static void WriteTrack(Stream file, List<TimedEvent> events, long endTick)
+    {
         // Note-offs before note-ons at the same tick, so a retriggered note is not cut.
         var ordered = events.OrderBy(e => e.Tick).ThenBy(e => e.Order).ToList();
-        var endTick = Math.Max(loopTicks, ordered[^1].Tick);
 
         using var track = new MemoryStream();
         long previous = 0;
@@ -56,16 +82,9 @@ public sealed class DrumMidiWriter(IOptions<DrumNoteMap> noteMap) : IDrumMidiWri
         WriteVariableLength(track, endTick - previous);
         track.Write(Meta(0x2F, []));
 
-        using var file = new MemoryStream();
-        file.Write("MThd"u8);
-        WriteUInt32(file, 6);
-        WriteUInt16(file, 0);
-        WriteUInt16(file, 1);
-        WriteUInt16(file, MidiConstants.TicksPerQuarterNote);
         file.Write("MTrk"u8);
         WriteUInt32(file, (uint)track.Length);
         track.WriteTo(file);
-        return file.ToArray();
     }
 
     private long[] NextTickForSameNote(IReadOnlyList<QuantizedHit> hits)

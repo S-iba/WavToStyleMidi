@@ -11,6 +11,27 @@ public sealed class DrumMidiWriterTests
     private readonly DrumMidiWriter _writer = new(Options.Create(new DrumNoteMap()));
 
     [Fact]
+    public void Writes_format1_file_with_tempo_track_and_drum_track_ending_at_loop_length()
+    {
+        var tempo = new TempoInfo(95, 2, 4, TempoSource.FileName);
+        var hits = new[] { new QuantizedHit(0, DrumKind.Kick, 110), new QuantizedHit(960, DrumKind.Snare, 120) };
+
+        var bytes = _writer.Build(hits, tempo, channel: 10, trackName: "groove");
+        var file = MidiFile.Read(new MemoryStream(bytes));
+
+        Assert.Equal(MidiFileFormat.MultiTrack, file.OriginalFormat);
+        var tracks = file.GetTrackChunks().ToList();
+        Assert.Equal(2, tracks.Count);
+        Assert.Empty(tracks[0].GetNotes());
+        Assert.Equal(2, tracks[1].GetNotes().Count);
+        Assert.Equal(95, file.GetTempoMap().GetTempoAtTime(new MidiTimeSpan(0)).BeatsPerMinute, 1);
+
+        // Both tracks end at the loop length: the drum track is last in the file.
+        var lastEventTick = tracks[1].Events.Sum(e => e.DeltaTime);
+        Assert.Equal(2 * 4 * MidiConstants.TicksPerQuarterNote, lastEventTick + EndOfTrackDelta(bytes));
+    }
+
+    [Fact]
     public void Writes_type0_file_with_tempo_notes_and_loop_length()
     {
         var tempo = new TempoInfo(95, 2, 4, TempoSource.FileName);
@@ -21,7 +42,7 @@ public sealed class DrumMidiWriterTests
             new QuantizedHit(960, DrumKind.Snare, 120),
         };
 
-        var bytes = _writer.Build(hits, tempo, channel: 10, trackName: "groove");
+        var bytes = _writer.Build(hits, tempo, channel: 10, trackName: "groove", format: 0);
         var file = MidiFile.Read(new MemoryStream(bytes));
 
         Assert.Equal(MidiFileFormat.SingleTrack, file.OriginalFormat);

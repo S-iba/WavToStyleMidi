@@ -87,7 +87,8 @@ The loop should be trimmed to exact bars. A tail longer than half a bar adds an 
 
 ## Output
 
-- A type 0 Standard MIDI File at 480 PPQ, with tempo and time signature.
+- A format 1 Standard MIDI File at 480 PPQ: track 1 holds tempo and time signature, track 2
+  the drums. Style Converter XT needs format 1. Use `--format 0` for a single-track file.
 - All drums on one channel, 10 by default.
 - The track ends exactly at the loop length, so it keeps its size when you drop it into a pattern.
 - Velocity follows how hard each hit was.
