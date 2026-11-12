@@ -47,6 +47,16 @@ public sealed class GrooveQuantizerTests
     }
 
     [Fact]
+    public void Unquantized_downbeat_found_slightly_early_stays_on_the_downbeat()
+    {
+        var hits = new[] { new DrumHit(-0.004, DrumKind.Clap, 1f) };
+
+        var result = _quantizer.Quantize(hits, Tempo, 16, 0.0);
+
+        Assert.Equal(0, Assert.Single(result).Tick);
+    }
+
+    [Fact]
     public void Drops_hits_past_the_loop()
     {
         var hits = new[] { new DrumHit(2.5, DrumKind.Kick, 1f) };

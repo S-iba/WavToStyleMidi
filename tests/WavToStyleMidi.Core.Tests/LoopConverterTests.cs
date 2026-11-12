@@ -167,6 +167,35 @@ public sealed class LoopConverterTests : IDisposable
     }
 
     [Fact]
+    public async Task Percussion_gets_its_own_lane_per_sound()
+    {
+        var loop = new SyntheticLoop(90, bars: 1)
+            .Add(DrumKind.Kick, 0, 8)
+            .Add(DrumKind.Tambourine, 1, 5, 9, 13)
+            .Add(DrumKind.LowWoodBlock, 3, 7, 11, 15)
+            .Add(DrumKind.ClosedHat, 4, 12)
+            .Add(DrumKind.HighBongo, 6, 14);
+
+        var notes = await ConvertAsync(loop, "perc_90bpm.wav");
+
+        AssertMatches(loop, notes);
+    }
+
+    [Fact]
+    public async Task Quiet_repeats_of_a_sound_are_kept()
+    {
+        var loop = new SyntheticLoop(90, bars: 1)
+            .Add(DrumKind.Kick, 0, 8)
+            .Add(DrumKind.Clap, 4, 12)
+            .Add(DrumKind.LowWoodBlock, 3, 11)
+            .Add(DrumKind.LowWoodBlock, 0.2f, 6, 14);
+
+        var notes = await ConvertAsync(loop, "ghosts_90bpm.wav");
+
+        AssertMatches(loop, notes);
+    }
+
+    [Fact]
     public async Task Works_out_tempo_from_loop_length()
     {
         var loop = new SyntheticLoop(100, bars: 2)
@@ -213,21 +242,12 @@ public sealed class LoopConverterTests : IDisposable
             .ToList();
     }
 
-    private static DrumKind KindFor(int note) => note switch
-    {
-        36 => DrumKind.Kick,
-        38 => DrumKind.Snare,
-        42 => DrumKind.ClosedHat,
-        46 => DrumKind.OpenHat,
-        49 => DrumKind.Crash,
-        51 => DrumKind.Ride,
-        39 => DrumKind.Clap,
-        37 => DrumKind.SideStick,
-        41 => DrumKind.LowTom,
-        45 => DrumKind.MidTom,
-        48 => DrumKind.HighTom,
-        _ => throw new InvalidOperationException($"Unexpected note {note}"),
-    };
+    private static readonly DrumNoteMap Notes = new();
+
+    private static DrumKind KindFor(int note) =>
+        Enum.GetValues<DrumKind>().Where(k => Notes.NoteFor(k) == note).DefaultIfEmpty((DrumKind)(-1)).Single() is var kind && Enum.IsDefined(kind)
+            ? kind
+            : throw new InvalidOperationException($"Unexpected note {note}");
 
     private static void AssertMatches(SyntheticLoop loop, List<(int Step, DrumKind Kind)> actual)
     {

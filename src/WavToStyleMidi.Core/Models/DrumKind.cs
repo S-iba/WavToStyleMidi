@@ -13,4 +13,17 @@ public enum DrumKind
     OpenHat,
     Ride,
     Crash,
+
+    // Percussion. Named from a group of hits that sound alike, by pitch and noise.
+    LowConga,
+    OpenHighConga,
+    MuteHighConga,
+    LowBongo,
+    HighBongo,
+    LowWoodBlock,
+    HighWoodBlock,
+    Claves,
+    Tambourine,
+    Maracas,
+    Cabasa,
 }

@@ -23,6 +23,8 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<IAudioLoader, WavAudioLoader>();
         services.AddSingleton<ITempoResolver, TempoResolver>();
+        services.AddSingleton<ISoundGrouper, SoundGrouper>();
+        services.AddSingleton<IPercussionNamer, PercussionNamer>();
         services.AddSingleton<IHitDetector, SpectralHitDetector>();
         services.AddSingleton<IGrooveQuantizer, GrooveQuantizer>();
         services.AddSingleton<IHatPatternFiller, HatPatternFiller>();

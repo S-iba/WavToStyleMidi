@@ -42,6 +42,17 @@ internal static class ResultFormatter
         DrumKind.LowTom => "low tom",
         DrumKind.MidTom => "mid tom",
         DrumKind.HighTom => "high tom",
+        DrumKind.LowConga => "low conga",
+        DrumKind.OpenHighConga => "open high conga",
+        DrumKind.MuteHighConga => "mute high conga",
+        DrumKind.LowBongo => "low bongo",
+        DrumKind.HighBongo => "high bongo",
+        DrumKind.LowWoodBlock => "low wood block",
+        DrumKind.HighWoodBlock => "high wood block",
+        DrumKind.Claves => "claves",
+        DrumKind.Tambourine => "tambourine",
+        DrumKind.Maracas => "maracas",
+        DrumKind.Cabasa => "cabasa",
         _ => kind.ToString(),
     };
 }

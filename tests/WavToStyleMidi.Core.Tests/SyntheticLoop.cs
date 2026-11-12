@@ -8,6 +8,7 @@ namespace WavToStyleMidi.Core.Tests;
 internal sealed class SyntheticLoop(double bpm, int bars, int sampleRate = 44100, double jitterMilliseconds = 0)
 {
     private readonly List<(int Step, DrumKind Kind)> _hits = [];
+    private readonly List<float> _gains = [];
     private readonly Random _random = new(42);
 
     public double Bpm => bpm;
@@ -19,11 +20,15 @@ internal sealed class SyntheticLoop(double bpm, int bars, int sampleRate = 44100
 
     public int Steps => bars * 16;
 
-    public SyntheticLoop Add(DrumKind kind, params int[] steps)
+    public SyntheticLoop Add(DrumKind kind, params int[] steps) => Add(kind, 1f, steps);
+
+    /// <summary>Adds hits played at <paramref name="gain"/> (1 = normal), e.g. ghost notes.</summary>
+    public SyntheticLoop Add(DrumKind kind, float gain, params int[] steps)
     {
         foreach (var step in steps)
         {
             _hits.Add((step, kind));
+            _gains.Add(gain);
         }
 
         return this;
@@ -33,15 +38,17 @@ internal sealed class SyntheticLoop(double bpm, int bars, int sampleRate = 44100
     {
         var length = (int)Math.Round(Steps * StepSeconds * sampleRate);
         var buffer = new float[length];
-        foreach (var (step, kind) in _hits)
+        for (var h = 0; h < _hits.Count; h++)
         {
+            var (step, kind) = _hits[h];
+            var gain = _gains[h];
             var offset = jitterMilliseconds == 0 ? 0 : (_random.NextDouble() * 2 - 1) * jitterMilliseconds / 1000.0;
             var start = Math.Max(0, (int)Math.Round((step * StepSeconds + offset) * sampleRate));
             var sound = Synthesize(kind);
             for (var i = 0; i < sound.Length; i++)
             {
                 // Tails wrap round like a seamless loop.
-                buffer[(start + i) % length] += sound[i];
+                buffer[(start + i) % length] += gain * sound[i];
             }
         }
 
@@ -84,6 +91,10 @@ internal sealed class SyntheticLoop(double bpm, int bars, int sampleRate = 44100
         DrumKind.ClosedHat => Hat(0.012, 0.25f),
         DrumKind.OpenHat => Hat(0.15, 0.25f),
         DrumKind.Crash => Hat(0.7, 0.35f),
+        DrumKind.LowConga => Resonance(230, 0.12, 0.05f),
+        DrumKind.HighBongo => Resonance(820, 0.06, 0.05f),
+        DrumKind.LowWoodBlock => Resonance(1150, 0.03, 0.03f),
+        DrumKind.Tambourine => Tambourine(),
         _ => throw new ArgumentOutOfRangeException(nameof(kind)),
     };
 
@@ -197,6 +208,37 @@ internal sealed class SyntheticLoop(double bpm, int bars, int sampleRate = 44100
                 0.5 * Math.Sin(2 * Math.PI * 520 * t) * Math.Exp(-t / 0.012)
                 + 0.4 * Math.Sin(2 * Math.PI * 1250 * t) * Math.Exp(-t / 0.008)
                 + 0.3 * Math.Sin(2 * Math.PI * 1900 * t) * Math.Exp(-t / 0.006));
+        }
+
+        return output;
+    }
+
+    /// <summary>A struck resonance (wood block, conga, bongo): a damped tone with a slight pitch drop and a short click.</summary>
+    private float[] Resonance(double pitchHz, double decaySeconds, float click)
+    {
+        var n = (int)(Math.Min(0.6, decaySeconds * 6) * sampleRate);
+        var output = new float[n];
+        var phase = 0.0;
+        for (var i = 0; i < n; i++)
+        {
+            var t = (double)i / sampleRate;
+            phase += 2 * Math.PI * pitchHz * (1 + 0.04 * Math.Exp(-t / 0.01)) / sampleRate;
+            var noise = (_random.NextDouble() * 2 - 1) * Math.Exp(-t / 0.002);
+            output[i] = (float)(0.6 * Math.Sin(phase) * Math.Exp(-t / decaySeconds) + click * noise);
+        }
+
+        return output;
+    }
+
+    /// <summary>A frame-drum knock around 1.65 kHz under a bright jingle of high noise.</summary>
+    private float[] Tambourine()
+    {
+        var knock = Resonance(1650, 0.025, 0f);
+        var jingle = Hat(0.06, 1.2f);
+        var output = new float[Math.Max(knock.Length, jingle.Length)];
+        for (var i = 0; i < output.Length; i++)
+        {
+            output[i] = (i < knock.Length ? 0.6f * knock[i] : 0) + (i < jingle.Length ? jingle[i] : 0);
         }
 
         return output;
