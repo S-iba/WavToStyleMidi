@@ -110,6 +110,62 @@ public sealed class LoopConverterTests : IDisposable
         AssertMatches(loop, notes);
     }
 
+    [Theory]
+    [MemberData(nameof(Tempos))]
+    public async Task Tom_fill_is_split_by_pitch(double bpm)
+    {
+        var loop = new SyntheticLoop(bpm, bars: 1)
+            .Add(DrumKind.Kick, 0, 8)
+            .Add(DrumKind.Snare, 4)
+            .Add(DrumKind.ClosedHat, 0, 2, 6)
+            .Add(DrumKind.HighTom, 10)
+            .Add(DrumKind.MidTom, 12)
+            .Add(DrumKind.LowTom, 14);
+
+        var notes = await ConvertAsync(loop, $"fill_{bpm}bpm.wav");
+
+        AssertMatches(loop, notes);
+    }
+
+    [Fact]
+    public async Task Ride_pattern_reads_as_ride()
+    {
+        var loop = new SyntheticLoop(104, bars: 2)
+            .Add(DrumKind.Kick, 0, 6, 8, 16, 22, 24)
+            .Add(DrumKind.Snare, 4, 12, 20, 28)
+            .Add(DrumKind.Ride, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30);
+
+        var notes = await ConvertAsync(loop, "jazzride_104bpm.wav");
+
+        AssertMatches(loop, notes);
+    }
+
+    [Fact]
+    public async Task Clap_backbeat_reads_as_clap()
+    {
+        var loop = new SyntheticLoop(98, bars: 1)
+            .Add(DrumKind.Kick, 0, 7, 8)
+            .Add(DrumKind.Clap, 4, 12)
+            .Add(DrumKind.ClosedHat, 0, 2, 6, 8, 10, 14);
+
+        var notes = await ConvertAsync(loop, "clap_98bpm.wav");
+
+        AssertMatches(loop, notes);
+    }
+
+    [Fact]
+    public async Task Side_stick_reads_as_side_stick()
+    {
+        var loop = new SyntheticLoop(90, bars: 1)
+            .Add(DrumKind.Kick, 0, 8, 10)
+            .Add(DrumKind.SideStick, 4, 12)
+            .Add(DrumKind.ClosedHat, 0, 2, 6, 8, 10, 14);
+
+        var notes = await ConvertAsync(loop, "rimshot_90bpm.wav");
+
+        AssertMatches(loop, notes);
+    }
+
     [Fact]
     public async Task Works_out_tempo_from_loop_length()
     {
@@ -164,6 +220,12 @@ public sealed class LoopConverterTests : IDisposable
         42 => DrumKind.ClosedHat,
         46 => DrumKind.OpenHat,
         49 => DrumKind.Crash,
+        51 => DrumKind.Ride,
+        39 => DrumKind.Clap,
+        37 => DrumKind.SideStick,
+        41 => DrumKind.LowTom,
+        45 => DrumKind.MidTom,
+        48 => DrumKind.HighTom,
         _ => throw new InvalidOperationException($"Unexpected note {note}"),
     };
 

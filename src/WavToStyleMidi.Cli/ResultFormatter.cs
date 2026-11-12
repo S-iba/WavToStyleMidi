@@ -36,6 +36,12 @@ internal static class ResultFormatter
         DrumKind.ClosedHat => "closed hat",
         DrumKind.OpenHat => "open hat",
         DrumKind.Crash => "crash",
+        DrumKind.Ride => "ride",
+        DrumKind.Clap => "clap",
+        DrumKind.SideStick => "side stick",
+        DrumKind.LowTom => "low tom",
+        DrumKind.MidTom => "mid tom",
+        DrumKind.HighTom => "high tom",
         _ => kind.ToString(),
     };
 }

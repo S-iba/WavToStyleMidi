@@ -6,13 +6,21 @@ Yamaha (PSR-SX, SFF) or Roland (BK/E/G) styles in your DAW and style converter.
 The tool doesn't import the audio. It transcribes the groove, so the keyboard plays
 it on its own drum kit:
 
-| Drum       | GM note |
-|------------|---------|
-| Kick       | 36      |
-| Snare      | 38      |
-| Closed hat | 42      |
-| Open hat   | 46      |
-| Crash      | 49      |
+| Drum        | GM note |
+|-------------|---------|
+| Kick        | 36      |
+| Side stick  | 37      |
+| Snare       | 38      |
+| Clap        | 39      |
+| Low tom     | 41      |
+| Closed hat  | 42      |
+| Mid tom     | 45      |
+| Open hat    | 46      |
+| High tom    | 48      |
+| Crash       | 49      |
+| Ride        | 51      |
+
+All of these are in `DrumNotes` in `appsettings.json` if your kit maps them differently.
 
 ## Build and run
 
@@ -74,18 +82,25 @@ The loop should be trimmed to exact bars. A tail longer than half a bar adds an 
 
 1. **Load.** `WavAudioLoader` reads the WAV (PCM 16/24/32-bit or float) and mixes it to mono.
 2. **Find hits.** `SpectralHitDetector` computes a short-time spectrum and looks for sudden
-   power rises (in dB) in three bands: kick (30–110 Hz), snare (1–5 kHz) and hats (7–16 kHz).
-   It measures each band as a whole, so the flicker of a ringing cymbal reads as flat and a
-   hit played on top of it still shows up.
-3. **Label hits.** For each hit it measures how much power each band gained:
-   - A kick or snare is labelled when its band gained strongly compared with the other hits
-     in the same loop. A band that never carries a real share of any hit counts as empty,
-     so bleed from other drums isn't labelled as that drum.
-   - A snare also puts noise in the hat band. A hat on a snare hit is only added when the
-     hat band holds clearly more than the loop's plainest snare would explain.
-   - Hats are sorted by how long they ring: closed (short), open (above 120 ms) or crash
-     (above 450 ms). If the next hit cuts the ring short, the length is estimated from how
-     fast it was falling.
+   power rises (in dB) in five bands: kick (30–110 Hz), toms (80–450 Hz), side stick
+   (400–2000 Hz), snare (1–5 kHz) and hats (7–16 kHz). It measures each band as a whole, so
+   the flicker of a ringing cymbal reads as flat and a hit played on top of it still shows
+   up. A second rise in the same bands within 80 ms is treated as the same hit.
+3. **Label hits.** For each hit it measures what came in and how:
+   - **Kick or tom:** the pitch of the low end about 90 ms after the hit. Below 80 Hz it's a
+     kick. Above that it's a tom, as long as the low end clearly outweighs the noise, which
+     rules out a snare's body. Toms split into low (below 115 Hz), mid (below 175 Hz) and
+     high.
+   - **Snare or clap:** a strong 1–5 kHz gain. With a 150–350 Hz body it's a snare; with
+     no body it's a clap.
+   - **Side stick:** a short click (under 60 ms) that carries most of its power at 400–2000 Hz.
+   - **Ride:** a top end made of separate tones rather than noise.
+   - **Hats and crash:** high-band gain. On a snare, clap or tom hit, a hat is only added
+     when the hat band holds clearly more than that drum's plainest hit would explain.
+     Ring time sorts them: closed (short), open (above 120 ms) or crash (above 450 ms). If
+     the next hit cuts the ring short, the length is estimated from how fast it was falling.
+   - A band that never carries a real share of any hit's power counts as empty, so bleed
+     from other drums isn't labelled as that drum.
 4. **Quantize.** `GrooveQuantizer` snaps hits to the grid at the strength you chose and keeps
    only the loudest of any duplicate hits.
 5. **Fill hats.** `HatPatternFiller` handles hats hidden by another drum: on a snare, on the
@@ -107,16 +122,24 @@ All detection thresholds and the note map are in `src/WavToStyleMidi.Cli/appsett
 | Ghost notes or quiet hits missing         | Lower `OnsetDelta` (e.g. 0.08) or the drum's `...Threshold`          |
 | Extra hits from reverb or room sound      | Raise `OnsetDelta` or `MinimumHitGapMilliseconds`                    |
 | Open hats come out closed (or the reverse)| Adjust `OpenHatDecayMilliseconds`                                    |
-| Your kit uses other notes (e.g. side stick)| Change `DrumNotes`                                                  |
+| Your kit uses other notes                 | Change `DrumNotes`                                                   |
+| Kicks come out as low toms (or reverse)   | Adjust `TomMinimumPitchHz`                                           |
+| Snares come out as claps (or reverse)     | Adjust `ClapMaximumBodyRatio`                                        |
 | Unwanted hats added on snares or crashes  | Set `FillMaskedHats` to `false`                                      |
 
 ### Known limits
 
-- The tool only knows five drums: kick, snare, closed hat, open hat and crash. Toms, ride,
-  claps and percussion come out as whichever of those they sound most like.
+- Percussion (shaker, tambourine, congas, cowbell) isn't recognised yet. It comes out as
+  whichever drum it sounds most like, or not at all.
+- The same tom struck twice quickly (16ths) while it's still ringing often comes out as
+  one hit. A fill that moves between toms is fine.
+- A kick tuned above 80 Hz reads as a low tom, and a tom below 80 Hz as a kick. Adjust
+  `TomMinimumPitchHz` to suit your kits.
+- In a ride pattern, a hat played with a ride hit is labelled as ride.
 - A hat that is much quieter than a crash still ringing over it doesn't show up in the audio.
   The tool only puts it back when the rest of the loop has a steady hat pattern.
-- A loop with heavy reverb or compression across the whole mix may need threshold tuning.
+- All the rules are tuned on synthetic drums (see Tests). Real loops with heavy processing
+  may need threshold changes; see the tuning table above.
 
 ## Workflow to a style
 
@@ -132,6 +155,7 @@ All detection thresholds and the note map are in `src/WavToStyleMidi.Cli/appsett
 dotnet test
 ```
 
-The end-to-end tests synthesise drum loops with known patterns (straight, played with timing
-jitter, busy 16ths, no hats, crash). They run each loop through the full pipeline and check
+The end-to-end tests synthesise drum loops with known patterns: straight rock at three
+tempos, timing jitter, busy 16ths, no hats, crash, hats under a ringing crash, a tom fill,
+a ride pattern, claps and side stick. They run each loop through the full pipeline and check
 that the MIDI contains exactly the hits that were played.

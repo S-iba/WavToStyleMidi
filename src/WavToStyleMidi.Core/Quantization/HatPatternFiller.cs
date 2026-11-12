@@ -22,7 +22,7 @@ public sealed class HatPatternFiller(IOptions<DetectionOptions> options) : IHatP
         }
 
         var loopTicks = (long)tempo.Bars * tempo.BeatsPerBar * MidiConstants.TicksPerQuarterNote;
-        var cymbalTicks = hits.Where(h => h.Kind is DrumKind.ClosedHat or DrumKind.OpenHat or DrumKind.Crash).Select(h => h.Tick).ToHashSet();
+        var cymbalTicks = hits.Where(h => h.Kind is DrumKind.ClosedHat or DrumKind.OpenHat or DrumKind.Crash or DrumKind.Ride).Select(h => h.Tick).ToHashSet();
         var snareTicks = hits.Where(h => h.Kind == DrumKind.Snare).Select(h => h.Tick).ToHashSet();
         var crashTicks = hits.Where(h => h.Kind == DrumKind.Crash).Select(h => h.Tick).ToList();
         var closedHats = hits.Where(h => h.Kind == DrumKind.ClosedHat).ToList();
