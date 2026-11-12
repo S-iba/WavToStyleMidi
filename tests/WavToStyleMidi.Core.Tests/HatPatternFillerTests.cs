@@ -37,6 +37,20 @@ public sealed class HatPatternFillerTests
     }
 
     [Fact]
+    public void Adds_hats_hidden_by_a_ringing_crash()
+    {
+        // 100 BPM: an 8th is 300 ms, so a 600 ms crash ring hides the next slot only.
+        var hits = Hats(3, 4, 5, 6, 7)
+            .Append(new QuantizedHit(0, DrumKind.Crash, 120))
+            .ToList();
+
+        var result = Filler(enabled: true).Fill(hits, OneBar);
+
+        var hatTicks = result.Where(h => h.Kind == DrumKind.ClosedHat).Select(h => h.Tick / Eighth);
+        Assert.Equal([1, 3, 4, 5, 6, 7], hatTicks);
+    }
+
+    [Fact]
     public void Can_be_switched_off()
     {
         var hits = Hats(0, 1, 3, 4, 5, 7)
@@ -47,7 +61,7 @@ public sealed class HatPatternFillerTests
     }
 
     private static HatPatternFiller Filler(bool enabled) =>
-        new(Options.Create(new DetectionOptions { FillHatsUnderSnares = enabled }));
+        new(Options.Create(new DetectionOptions { FillMaskedHats = enabled }));
 
     private static IEnumerable<QuantizedHit> Hats(params int[] eighths) =>
         eighths.Select(e => new QuantizedHit(e * Eighth, DrumKind.ClosedHat, 80));

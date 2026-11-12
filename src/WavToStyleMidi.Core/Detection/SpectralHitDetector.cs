@@ -79,7 +79,11 @@ public sealed class SpectralHitDetector(IOptions<DetectionOptions> options) : IH
 
         var spectrogram = Spectrogram.Compute(clip.Samples, clip.SampleRate, _options.WindowMilliseconds, _options.HopMilliseconds, cancellationToken);
         var bands = BandRanges(spectrogram);
-        var onsets = FindOnsets(spectrogram, bands);
+        var power = bands.Select(b => BandPower(spectrogram, b)).ToArray();
+
+        // Frames are centred on their time, so a hit starts showing about half a window early.
+        var halfWindow = (int)Math.Ceiling(spectrogram.WindowSize / 2.0 / spectrogram.Hop);
+        var onsets = FindOnsets(power, halfWindow, spectrogram.HopSeconds);
         if (onsets.Count == 0)
         {
             return [];
@@ -87,11 +91,7 @@ public sealed class SpectralHitDetector(IOptions<DetectionOptions> options) : IH
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        var power = bands.Select(b => BandPower(spectrogram, b)).ToArray();
         var totalPower = BandPower(spectrogram, spectrogram.BinRange(FullRangeLowHz, spectrogram.SampleRate / 2.0));
-
-        // Frames are centred on their time, so a hit starts showing about half a window early.
-        var halfWindow = (int)Math.Ceiling(spectrogram.WindowSize / 2.0 / spectrogram.Hop);
         var rises = new double[onsets.Count, BandCount];
         var totalRises = new double[onsets.Count];
         for (var i = 0; i < onsets.Count; i++)
@@ -141,49 +141,35 @@ public sealed class SpectralHitDetector(IOptions<DetectionOptions> options) : IH
         spectrogram.BinRange(_options.HatLowHz, Math.Min(_options.HatHighHz, spectrogram.SampleRate / 2.0)),
     ];
 
-    /// <summary>Onsets from log spectral flux, each band scaled to its own loudest hit.</summary>
-    private List<int> FindOnsets(Spectrogram spectrogram, (int First, int Last)[] bands)
+    /// <summary>
+    /// Onsets from the rise in each band's total power, in dB, over half a window.
+    /// Summing a whole band averages out the bin-to-bin flicker of noisy sounds, so a ringing
+    /// crash reads as flat and a hat played on top of it still shows as a clear rise.
+    /// Rises are capped so one loud hit from silence does not dwarf the rest.
+    /// </summary>
+    private List<int> FindOnsets(double[][] power, int lag, double hopSeconds)
     {
-        var frames = spectrogram.FrameCount;
-        var flux = new float[BandCount][];
-        for (var b = 0; b < BandCount; b++)
-        {
-            flux[b] = new float[frames];
-            var (first, last) = bands[b];
-            var count = last - first + 1;
-            for (var f = 1; f < frames; f++)
-            {
-                var current = spectrogram.LogMagnitude[f];
-                var previous = spectrogram.LogMagnitude[f - 1];
-                var sum = 0f;
-                for (var k = first; k <= last; k++)
-                {
-                    sum += Math.Max(0f, current[k] - previous[k]);
-                }
-
-                flux[b][f] = sum / count;
-            }
-        }
-
-        var peaks = flux.Select(f => f.Max()).ToArray();
-        var floor = peaks.Max() * (float)_options.EmptyBandFraction;
+        var frames = power[0].Length;
         var curve = new float[frames];
-        for (var b = 0; b < BandCount; b++)
+        var cap = _options.OnsetRiseCapDb;
+
+        foreach (var band in power)
         {
-            var scale = Math.Max(peaks[b], floor);
-            if (scale <= 0)
+            // Floor relative to the band's loudest frame, so silence and dither don't count as rises.
+            var floor = band.Max() * Math.Pow(10, -_options.OnsetFloorDb / 10);
+            if (floor <= 0)
             {
                 continue;
             }
 
-            for (var f = 0; f < frames; f++)
+            for (var f = lag; f < frames; f++)
             {
-                // Max, not sum: a quiet hat on its own must stand out as much as kick plus snare.
-                curve[f] = Math.Max(curve[f], flux[b][f] / scale);
+                var riseDb = 10 * Math.Log10((band[f] + floor) / (band[f - lag] + floor));
+                curve[f] = Math.Max(curve[f], (float)Math.Clamp(riseDb, 0, cap));
             }
         }
 
-        return OnsetPicker.Pick(curve, spectrogram.HopSeconds, _options.OnsetDelta, _options.MinimumHitGapMilliseconds / 1000.0);
+        return OnsetPicker.Pick(curve, hopSeconds, _options.OnsetDelta, _options.MinimumHitGapMilliseconds / 1000.0);
     }
 
     private static double[] BandPower(Spectrogram spectrogram, (int First, int Last) band)

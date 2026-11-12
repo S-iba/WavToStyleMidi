@@ -21,14 +21,20 @@ public sealed class DetectionOptions
     public double HatLowHz { get; set; } = 7000;
     public double HatHighHz { get; set; } = 16000;
 
-    /// <summary>How far above the local average the onset curve must rise to count as a hit.</summary>
+    /// <summary>
+    /// How far above the local average a band's power rise must be to count as a hit,
+    /// as a fraction of <see cref="OnsetRiseCapDb"/>.
+    /// </summary>
     public double OnsetDelta { get; set; } = 0.12;
+
+    /// <summary>Largest band power rise (dB) that counts; bigger rises are treated as equal.</summary>
+    public double OnsetRiseCapDb { get; set; } = 10;
+
+    /// <summary>Levels this far (dB) below a band's loudest moment are treated as silence.</summary>
+    public double OnsetFloorDb { get; set; } = 50;
 
     /// <summary>Minimum gap between two detected hits, in milliseconds.</summary>
     public double MinimumHitGapMilliseconds { get; set; } = 35;
-
-    /// <summary>Onset detection only: bands quieter than this fraction of the busiest band are not boosted.</summary>
-    public double EmptyBandFraction { get; set; } = 0.08;
 
     /// <summary>
     /// A band that never holds at least this share of a hit's total power gain is treated as
@@ -58,12 +64,15 @@ public sealed class DetectionOptions
     public int MinimumVelocity { get; set; } = 45;
 
     /// <summary>
-    /// A snare also fills the hat band, so a hat played with it is hard to hear in the audio.
-    /// When the rest of the loop has a steady 8th or 16th hat pattern, add the hats on the snare
-    /// hits too.
+    /// A snare or a ringing crash fills the hat band, so hats played with them are hard to hear
+    /// in the audio. When the rest of the loop has a steady 8th or 16th hat pattern, add the
+    /// hidden hats too.
     /// </summary>
-    public bool FillHatsUnderSnares { get; set; } = true;
+    public bool FillMaskedHats { get; set; } = true;
 
-    /// <summary>Share of non-snare grid slots that must have a hat before the pattern is filled.</summary>
+    /// <summary>How long after a crash its ring is treated as hiding hats.</summary>
+    public double CrashMaskMilliseconds { get; set; } = 600;
+
+    /// <summary>Share of the unhidden grid slots that must have a hat before the pattern is filled.</summary>
     public double HatPatternCoverage { get; set; } = 0.8;
 }

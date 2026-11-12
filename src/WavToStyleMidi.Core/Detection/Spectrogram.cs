@@ -9,21 +9,16 @@ namespace WavToStyleMidi.Core.Detection;
 /// </summary>
 internal sealed class Spectrogram
 {
-    private const float LogCompression = 1000f;
-
-    private Spectrogram(float[][] magnitude, float[][] logMagnitude, int windowSize, int hop, int sampleRate, int leadFrames)
+    private Spectrogram(float[][] magnitude, int windowSize, int hop, int sampleRate, int leadFrames)
     {
         LeadFrames = leadFrames;
         Magnitude = magnitude;
-        LogMagnitude = logMagnitude;
         WindowSize = windowSize;
         Hop = hop;
         SampleRate = sampleRate;
     }
 
     public float[][] Magnitude { get; }
-
-    public float[][] LogMagnitude { get; }
 
     public int WindowSize { get; }
 
@@ -70,7 +65,6 @@ internal sealed class Spectrogram
         var scale = 2f / windowSum;
         var buffer = new Complex32Buffer(windowSize);
         var magnitude = new float[frames][];
-        var logMagnitude = new float[frames][];
 
         for (var f = 0; f < frames; f++)
         {
@@ -90,19 +84,16 @@ internal sealed class Spectrogram
             Fourier.Forward(buffer.Data, FourierOptions.NoScaling);
 
             var mag = new float[bins];
-            var log = new float[bins];
             for (var k = 0; k < bins; k++)
             {
                 var m = buffer.Data[k].Magnitude * scale;
                 mag[k] = m;
-                log[k] = MathF.Log(1f + LogCompression * m);
             }
 
             magnitude[f] = mag;
-            logMagnitude[f] = log;
         }
 
-        return new Spectrogram(magnitude, logMagnitude, windowSize, hop, sampleRate, leadFrames);
+        return new Spectrogram(magnitude, windowSize, hop, sampleRate, leadFrames);
     }
 
     private sealed class Complex32Buffer(int size)

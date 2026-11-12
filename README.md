@@ -74,7 +74,9 @@ The loop should be trimmed to exact bars. A tail longer than half a bar adds an 
 
 1. **Load.** `WavAudioLoader` reads the WAV (PCM 16/24/32-bit or float) and mixes it to mono.
 2. **Find hits.** `SpectralHitDetector` computes a short-time spectrum and looks for sudden
-   rises in three bands: kick (30–110 Hz), snare (1–5 kHz) and hats (7–16 kHz).
+   power rises (in dB) in three bands: kick (30–110 Hz), snare (1–5 kHz) and hats (7–16 kHz).
+   It measures each band as a whole, so the flicker of a ringing cymbal reads as flat and a
+   hit played on top of it still shows up.
 3. **Label hits.** For each hit it measures how much power each band gained:
    - A kick or snare is labelled when its band gained strongly compared with the other hits
      in the same loop. A band that never carries a real share of any hit counts as empty,
@@ -86,9 +88,9 @@ The loop should be trimmed to exact bars. A tail longer than half a bar adds an 
      fast it was falling.
 4. **Quantize.** `GrooveQuantizer` snaps hits to the grid at the strength you chose and keeps
    only the loudest of any duplicate hits.
-5. **Fill hats.** `HatPatternFiller` handles hats hidden by a snare. When at least 80% of the
-   non-snare 8th or 16th slots have a hat, it adds the hats on the snare hit and on the slot
-   right after it.
+5. **Fill hats.** `HatPatternFiller` handles hats hidden by another drum: on a snare, on the
+   slot right after a snare, and while a crash is ringing (600 ms by default). When at least
+   80% of the other 8th or 16th slots have a hat, it adds the hidden ones.
 6. **Write.** `DrumMidiWriter` writes the SMF.
 
 Every step sits behind an interface (`IHitDetector`, `IGrooveQuantizer`, ...) and is
@@ -106,13 +108,14 @@ All detection thresholds and the note map are in `src/WavToStyleMidi.Cli/appsett
 | Extra hits from reverb or room sound      | Raise `OnsetDelta` or `MinimumHitGapMilliseconds`                    |
 | Open hats come out closed (or the reverse)| Adjust `OpenHatDecayMilliseconds`                                    |
 | Your kit uses other notes (e.g. side stick)| Change `DrumNotes`                                                  |
-| Unwanted hats added on snares             | Set `FillHatsUnderSnares` to `false`                                 |
+| Unwanted hats added on snares or crashes  | Set `FillMaskedHats` to `false`                                      |
 
 ### Known limits
 
 - The tool only knows five drums: kick, snare, closed hat, open hat and crash. Toms, ride,
   claps and percussion come out as whichever of those they sound most like.
-- A hat played under a loud, still-ringing crash can be missed.
+- A hat that is much quieter than a crash still ringing over it doesn't show up in the audio.
+  The tool only puts it back when the rest of the loop has a steady hat pattern.
 - A loop with heavy reverb or compression across the whole mix may need threshold tuning.
 
 ## Workflow to a style

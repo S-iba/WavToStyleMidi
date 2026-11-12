@@ -56,6 +56,22 @@ public sealed class LoopConverterTests : IDisposable
         AssertMatches(loop, notes);
     }
 
+    [Theory]
+    [MemberData(nameof(Tempos))]
+    public async Task Hats_under_a_ringing_crash_are_kept(double bpm)
+    {
+        var loop = new SyntheticLoop(bpm, bars: 2)
+            .Add(DrumKind.Crash, 0)
+            .Add(DrumKind.Kick, 0, 6, 8, 16, 22, 24)
+            .Add(DrumKind.Snare, 4, 12, 20, 28)
+            .Add(DrumKind.ClosedHat, 2, 4, 6, 8, 10, 12, 16, 18, 20, 22, 24, 26, 28)
+            .Add(DrumKind.OpenHat, 14, 30);
+
+        var notes = await ConvertAsync(loop, $"crashhats_{bpm}bpm.wav");
+
+        AssertMatches(loop, notes);
+    }
+
     [Fact]
     public async Task Played_timing_snaps_back_to_the_grid()
     {
