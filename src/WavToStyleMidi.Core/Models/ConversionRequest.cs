@@ -24,4 +24,7 @@ public sealed record ConversionRequest
     public int MidiChannel { get; init; } = 10;
 
     public bool Recursive { get; init; }
+
+    /// <summary>Standard MIDI File format: 1 (tempo track + drum track, for style converters) or 0 (single track).</summary>
+    public int MidiFormat { get; init; } = 1;
 }

@@ -20,6 +20,22 @@ it on its own drum kit:
 | Crash       | 49      |
 | Ride        | 51      |
 
+Percussion gets its own notes (see "Percussion" below):
+
+| Percussion       | GM note |
+|------------------|---------|
+| Tambourine       | 54      |
+| High bongo       | 60      |
+| Low bongo        | 61      |
+| Mute high conga  | 62      |
+| Open high conga  | 63      |
+| Low conga        | 64      |
+| Cabasa           | 69      |
+| Maracas          | 70      |
+| Claves           | 75      |
+| High wood block  | 76      |
+| Low wood block   | 77      |
+
 All of these are in `DrumNotes` in `appsettings.json` if your kit maps them differently.
 
 ## Build and run
@@ -71,7 +87,8 @@ The loop should be trimmed to exact bars. A tail longer than half a bar adds an 
 
 ## Output
 
-- A type 0 Standard MIDI File at 480 PPQ, with tempo and time signature.
+- A format 1 Standard MIDI File at 480 PPQ: track 1 holds tempo and time signature, track 2
+  the drums. Style Converter XT needs format 1. Use `--format 0` for a single-track file.
 - All drums on one channel, 10 by default.
 - The track ends exactly at the loop length, so it keeps its size when you drop it into a pattern.
 - Velocity follows how hard each hit was.
@@ -101,16 +118,44 @@ The loop should be trimmed to exact bars. A tail longer than half a bar adds an 
      the next hit cuts the ring short, the length is estimated from how fast it was falling.
    - A band that never carries a real share of any hit's power counts as empty, so bleed
      from other drums isn't labelled as that drum.
-4. **Quantize.** `GrooveQuantizer` snaps hits to the grid at the strength you chose and keeps
+4. **Group by sound.** `SoundGrouper` gives every hit a fingerprint (the shape of the
+   spectrum it added, in 24 bands, plus how long it rings) and groups hits that sound alike.
+   `PercussionNamer` then decides which groups are percussion (see below). Other groups keep
+   the drums the rules found. A clear hit the rules missed, such as a ghost note, takes its
+   group's drums when the sound repeats in the loop. Set `GroupBySound` to `false` to turn
+   this off.
+5. **Quantize.** `GrooveQuantizer` snaps hits to the grid at the strength you chose and keeps
    only the loudest of any duplicate hits.
-5. **Fill hats.** `HatPatternFiller` handles hats hidden by another drum: on a snare, on the
+6. **Fill hats.** `HatPatternFiller` handles hats hidden by another drum: on a snare, on the
    slot right after a snare, and while a crash is ringing (600 ms by default). When at least
    80% of the other 8th or 16th slots have a hat, it adds the hidden ones.
-6. **Write.** `DrumMidiWriter` writes the SMF.
+7. **Write.** `DrumMidiWriter` writes the SMF.
 
 Every step sits behind an interface (`IHitDetector`, `IGrooveQuantizer`, ...) and is
 registered with `services.AddWavToStyleMidi()`. That means a different detector, such as an
 ONNX drum-transcription model, can replace `SpectralHitDetector` later.
+
+### Percussion
+
+A group is percussion when the rules found only clap, side stick or hats in it (or nothing),
+but its mids (300 Hz–5 kHz) ring at a clear resonance, which a real clap or hat doesn't. A
+group that is only a side stick stays a side stick.
+
+- A resonance with a bright jingle on top (`TambourineMinimumHatShare`) is a tambourine.
+- Other resonances get a note by pitch: low conga (below 250 Hz), open high conga, mute high
+  conga, low bongo, high bongo (below 1 kHz), low wood block (below 1.5 kHz), high wood block
+  (below 2.2 kHz), then claves.
+- An unnamed noise sound with little in the mids is maracas, then cabasa.
+- No two percussion sounds share a note, so each keeps its own lane. If two land on the same
+  pitch step, the higher one moves up a note, so pitch order is kept. Groups ringing at the
+  same pitch (within 4%) are one instrument and share a note.
+
+The names are a best guess from pitch and noise. What matters is that every sound gets its own
+lane with the right timing. If a name is wrong, change it for the whole lane in FL Studio's
+piano roll, or change the note in `DrumNotes`.
+
+Percussion hits are also kept out of the levels that the snare and hat thresholds compare
+against, so a loud wood block doesn't hide a real clap.
 
 ### Tuning
 
@@ -126,11 +171,16 @@ All detection thresholds and the note map are in `src/WavToStyleMidi.Cli/appsett
 | Kicks come out as low toms (or reverse)   | Adjust `TomMinimumPitchHz`                                           |
 | Snares come out as claps (or reverse)     | Adjust `ClapMaximumBodyRatio`                                        |
 | Unwanted hats added on snares or crashes  | Set `FillMaskedHats` to `false`                                      |
+| Two different sounds share a lane         | Lower `SoundGroupDistance` (e.g. 0.07)                               |
+| One sound is split across two lanes       | Raise `SoundGroupDistance` (e.g. 0.13)                               |
+| A clap or hat comes out as percussion     | Raise `PercussionMinimumTonalShare`                                  |
 
 ### Known limits
 
-- Percussion (shaker, tambourine, congas, cowbell) isn't recognised yet. It comes out as
-  whichever drum it sounds most like, or not at all.
+- Percussion names are guesses from pitch (see Percussion). A low conga sounds like a tom
+  and is labelled as one. Cowbell has no rule of its own and comes out as a pitched
+  percussion note.
+- A strongly tuned clap (a narrow band of noise) can read as percussion.
 - The same tom struck twice quickly (16ths) while it's still ringing often comes out as
   one hit. A fill that moves between toms is fine.
 - A kick tuned above 80 Hz reads as a low tom, and a tom below 80 Hz as a kick. Adjust
@@ -138,7 +188,7 @@ All detection thresholds and the note map are in `src/WavToStyleMidi.Cli/appsett
 - In a ride pattern, a hat played with a ride hit is labelled as ride.
 - A hat that is much quieter than a crash still ringing over it doesn't show up in the audio.
   The tool only puts it back when the rest of the loop has a steady hat pattern.
-- All the rules are tuned on synthetic drums (see Tests). Real loops with heavy processing
+- The rules are tuned on synthetic drums (see Tests) and one real percussion loop. Real loops with heavy processing
   may need threshold changes; see the tuning table above.
 
 ## Workflow to a style
@@ -157,5 +207,6 @@ dotnet test
 
 The end-to-end tests synthesise drum loops with known patterns: straight rock at three
 tempos, timing jitter, busy 16ths, no hats, crash, hats under a ringing crash, a tom fill,
-a ride pattern, claps and side stick. They run each loop through the full pipeline and check
+a ride pattern, claps, side stick, a percussion loop (tambourine, wood block, bongo) and
+quiet ghost notes. They run each loop through the full pipeline and check
 that the MIDI contains exactly the hits that were played.

@@ -47,7 +47,7 @@ public sealed class LoopConverter(
         var hits = hitDetector.Detect(clip, cancellationToken);
         var placed = hatPatternFiller.Fill(quantizer.Quantize(hits, tempo, request.GridDivision, request.QuantizeStrength), tempo);
         var trackName = Path.GetFileNameWithoutExtension(wavPath);
-        var bytes = midiWriter.Build(placed, tempo, request.MidiChannel, trackName);
+        var bytes = midiWriter.Build(placed, tempo, request.MidiChannel, trackName, request.MidiFormat);
 
         var outputPath = OutputPathFor(wavPath, request.OutputDirectory);
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);

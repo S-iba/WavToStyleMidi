@@ -9,7 +9,10 @@ namespace WavToStyleMidi.Core.Detection;
 /// whether its top end is noise or separate tones, and how long it rings.
 /// One onset can produce several hits, e.g. kick and closed hat together.
 /// </summary>
-public sealed class SpectralHitDetector(IOptions<DetectionOptions> options) : IHitDetector
+public sealed class SpectralHitDetector(
+    IOptions<DetectionOptions> options,
+    ISoundGrouper soundGrouper,
+    IPercussionNamer percussionNamer) : IHitDetector
 {
     private const int KickBand = 0;
     private const int TomBand = 1;
@@ -29,6 +32,19 @@ public sealed class SpectralHitDetector(IOptions<DetectionOptions> options) : IH
     private const double MinimumExtrapolationSeconds = 0.04;
     private const double FullRangeLowHz = 20;
     private const double LevelFloorDb = -60;
+    private const double MidLowHz = 300;
+    private const double MidHighHz = 5000;
+    private const int FingerprintBandCount = 24;
+
+    // A ride's partials are a few bins wide; a wood block's or conga's resonance can be 100-200 Hz.
+    private const double RideNeighbourhoodHz = 8 * 44100.0 / 2048;
+    private const double ResonanceNeighbourhoodHz = 700;
+    private const double ResonantMinimumMidShare = 0.15;
+    private const double SnareFloorShare = 0.1;
+    private const double FingerprintLowHz = 40;
+    private const double FingerprintHighHz = 16000;
+    private const double FingerprintRangeDb = 40;
+    private const float FingerprintDecayWeight = 2f;
 
     private readonly DetectionOptions _options = options.Value;
 
@@ -36,13 +52,90 @@ public sealed class SpectralHitDetector(IOptions<DetectionOptions> options) : IH
     {
         ArgumentNullException.ThrowIfNull(clip);
 
-        var hits = new List<DrumHit>();
-        foreach (var onset in Analyze(clip, cancellationToken))
+        var onsets = Analyze(clip, cancellationToken);
+        var labelled = onsets.Select(o => Label(o).ToList()).ToList();
+        if (!_options.GroupBySound || onsets.Count == 0)
         {
-            hits.AddRange(Label(onset));
+            return labelled.SelectMany(hits => hits).ToList();
         }
 
-        return hits;
+        cancellationToken.ThrowIfCancellationRequested();
+        return GroupBySound(onsets, labelled);
+    }
+
+    /// <summary>
+    /// Groups hits by sound. Percussion groups get one percussion note each; other groups keep
+    /// the drums the rules found, and a clear hit the rules missed takes its group's usual drums.
+    /// </summary>
+    private List<DrumHit> GroupBySound(IReadOnlyList<OnsetFeatures> onsets, List<List<DrumHit>> labelled)
+    {
+        var groupOf = soundGrouper.Group(onsets.Select(o => o.Fingerprint).ToList(), _options.SoundGroupDistance);
+
+        // Wobbles in a ringing tail are not hits: an unnamed hit needs a clear jump that adds real
+        // power, and a sound that repeats.
+        var groups = Enumerable.Range(0, onsets.Count)
+            .Where(i => labelled[i].Count > 0
+                || (onsets[i].MaxRiseDb >= _options.MinimumUnlabelledRiseDb && onsets[i].GainLevelDb >= -_options.UnlabelledLevelRangeDb))
+            .GroupBy(i => groupOf[i])
+            .Where(g => g.Count() >= 2 || g.Any(i => labelled[i].Count > 0))
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        var summaries = groups.Select(g => Summarize(g.Key, g.Value, onsets, labelled)).ToList();
+        var percussion = percussionNamer.Name(summaries);
+
+        var hits = new List<DrumHit>();
+        foreach (var summary in summaries)
+        {
+            foreach (var i in groups[summary.Id])
+            {
+                if (percussion.TryGetValue(summary.Id, out var kind))
+                {
+                    hits.Add(new DrumHit(onsets[i].TimeSeconds, kind, (float)onsets[i].MidLevel));
+                }
+                else if (labelled[i].Count > 0)
+                {
+                    // A kick alone and a kick with a quiet hat sound alike, so named hits keep their own drums.
+                    hits.AddRange(labelled[i]);
+                }
+                else
+                {
+                    // A ghost note the rules missed: the group's usual drums, as soft as its softest hit.
+                    hits.AddRange(summary.Consensus.Select(k => new DrumHit(
+                        onsets[i].TimeSeconds,
+                        k,
+                        groups[summary.Id].SelectMany(j => labelled[j]).Where(h => h.Kind == k).Min(h => h.Strength))));
+                }
+            }
+        }
+
+        return hits.OrderBy(h => h.TimeSeconds).ToList();
+    }
+
+    private static SoundGroup Summarize(int id, List<int> members, IReadOnlyList<OnsetFeatures> onsets, List<List<DrumHit>> labelled)
+    {
+        var named = members.Where(i => labelled[i].Count > 0).ToList();
+        var consensus = named
+            .SelectMany(i => labelled[i].Select(h => h.Kind).Distinct())
+            .GroupBy(k => k)
+            .Where(k => 2 * k.Count() >= named.Count)
+            .Select(k => k.Key)
+            .ToHashSet();
+
+        return new SoundGroup(
+            id,
+            consensus,
+            Median(members.Select(i => onsets[i].MidPitchHz)),
+            members.Average(i => onsets[i].MidTonalShare),
+            members.Average(i => onsets[i].MidShare),
+            members.Average(i => onsets[i].HatShare));
+    }
+
+    private static double Median(IEnumerable<double> values)
+    {
+        var sorted = values.Order().ToList();
+        return sorted.Count == 0 ? 0 : sorted.Count % 2 == 1
+            ? sorted[sorted.Count / 2]
+            : (sorted[sorted.Count / 2 - 1] + sorted[sorted.Count / 2]) / 2;
     }
 
     /// <summary>How one band changed at an onset.</summary>
@@ -77,7 +170,32 @@ public sealed class SpectralHitDetector(IOptions<DetectionOptions> options) : IH
         double MidDecayMilliseconds,
         double HatDecayMilliseconds,
         double TonalShare,
-        double HatExcess);
+        double HatExcess)
+    {
+        /// <summary>Spectral shape of what the hit added (0-1 per band, level removed) plus its ring, for grouping.</summary>
+        public float[] Fingerprint { get; init; } = [];
+
+        /// <summary>Biggest dB jump in the kick, tom, snare, hat or rim band; tells a real hit from a wobble in a tail.</summary>
+        public double MaxRiseDb { get; init; }
+
+        /// <summary>Strongest frequency in 300 Hz-5 kHz just after the hit.</summary>
+        public double MidPitchHz { get; init; }
+
+        /// <summary>Share of 300 Hz-5 kHz power in narrow peaks: high for wood blocks, congas and bells, near 0 for noise.</summary>
+        public double MidTonalShare { get; init; }
+
+        /// <summary>Share of the hit's added power in 300 Hz-5 kHz.</summary>
+        public double MidShare { get; init; }
+
+        /// <summary>Share of the hit's added power in the hat band.</summary>
+        public double HatShare { get; init; }
+
+        /// <summary>300 Hz-5 kHz loudness the hit added, 0-1 against the loudest in the loop (amplitude, not power).</summary>
+        public double MidLevel { get; init; }
+
+        /// <summary>Power the hit added, in dB against the hit that added the most in the loop.</summary>
+        public double GainLevelDb { get; init; }
+    }
 
     internal IEnumerable<DrumHit> Label(OnsetFeatures onset)
     {
@@ -275,6 +393,42 @@ public sealed class SpectralHitDetector(IOptions<DetectionOptions> options) : IH
                 HatExcess: double.PositiveInfinity);
         }
 
+        var fingerprintBands = FingerprintBands(spectrogram).Select(b => BandPower(spectrogram, b)).ToArray();
+        var midBand = bands[MidBand];
+        var loudestGain = totalGain.Max();
+        var loudestMid = Enumerable.Range(0, count).Max(i => Gain(i, MidBand));
+        for (var i = 0; i < count; i++)
+        {
+            // Frames are centred, so two half windows on the window holds only the new hit.
+            var settled = Math.Min(onsets[i] + 2 * halfWindow, Math.Max(onsets[i], next[i] - halfWindow));
+            features[i] = features[i] with
+            {
+                Fingerprint = Fingerprint(fingerprintBands, onsets[i], next[i], halfWindow, features[i]),
+                MaxRiseDb = new[] { changes[i, KickBand], changes[i, TomBand], changes[i, SnareBand], changes[i, HatBand], changes[i, RimBand] }.Max(c => c.RiseDb),
+                MidPitchHz = PeakPitch(spectrogram, settled, MidLowHz, MidHighHz),
+                MidTonalShare = TonalShare(spectrogram, midBand, settled, ResonanceNeighbourhoodHz),
+                MidShare = totalGain[i] > 0 ? Gain(i, MidBand) / totalGain[i] : 0,
+                HatShare = totalGain[i] > 0 ? Gain(i, HatBand) / totalGain[i] : 0,
+                MidLevel = loudestMid > 0 ? Math.Sqrt(Gain(i, MidBand) / loudestMid) : 0,
+                GainLevelDb = totalGain[i] > 0 && loudestGain > 0 ? 10 * Math.Log10(totalGain[i] / loudestGain) : LevelFloorDb,
+            };
+        }
+
+        // A ride's partials land in the snare band too, and so does a wood block's or bongo's
+        // ring, so snares are measured against hits that are neither.
+        var snareGains = Enumerable.Range(0, count).Where(i => !IsRide(features[i]) && !IsResonant(features[i])).Select(i => features[i].Snare.Gain).ToList();
+        var allSnareMax = Enumerable.Range(0, count).Max(i => features[i].Snare.Gain);
+
+        // Floored, so a loop of only kicks and wood blocks doesn't turn kick bleed into snares.
+        var snareMax = Math.Max(snareGains.Count == 0 ? 0 : snareGains.Max(), SnareFloorShare * allSnareMax);
+        for (var i = 0; i < count; i++)
+        {
+            features[i] = features[i] with
+            {
+                Snare = features[i].Snare with { Relative = snareMax > 0 ? Math.Min(features[i].Snare.Gain / snareMax, 1) : 0 },
+            };
+        }
+
         // A snare, clap or tom also puts noise in the hat band. For each of them, its hit with
         // the least high end tells us how much comes from the drum itself; well above that is a hat.
         var carriers = new Dictionary<DrumKind, List<int>>();
@@ -299,19 +453,9 @@ public sealed class SpectralHitDetector(IOptions<DetectionOptions> options) : IH
             }
         }
 
-        // A ride's partials land in the snare band too, so snares are measured against non-ride hits.
-        var snareGains = Enumerable.Range(0, count).Where(i => !IsRide(features[i])).Select(i => features[i].Snare.Gain).ToList();
-        var snareMax = snareGains.Count == 0 ? 0 : snareGains.Max();
-        for (var i = 0; i < count; i++)
-        {
-            features[i] = features[i] with
-            {
-                Snare = features[i].Snare with { Relative = snareMax > 0 ? Math.Min(features[i].Snare.Gain / snareMax, 1) : 0 },
-            };
-        }
-
         // Hats are measured against hits that are hats, not snare noise in the hat band.
-        var hatCandidates = Enumerable.Range(0, count).Where(i => features[i].HatExcess >= _options.HatOverSnareFactor).ToList();
+        // A tambourine's jingle is not a hat either.
+        var hatCandidates = Enumerable.Range(0, count).Where(i => features[i].HatExcess >= _options.HatOverSnareFactor && !IsResonant(features[i])).ToList();
         var hatGains = hatCandidates.Select(i => features[i].Hat.Gain).ToList();
 
         // If no candidate carries a real share of its hit's power in the hat band, there are no hats.
@@ -339,10 +483,20 @@ public sealed class SpectralHitDetector(IOptions<DetectionOptions> options) : IH
         return features;
     }
 
+    /// <summary>
+    /// A hit whose mids are mostly a clear resonance (wood block, bongo, tambourine knock).
+    /// Kept out of the loudest-snare and typical-hat levels so percussion doesn't push the real
+    /// claps and hats under their thresholds.
+    /// </summary>
+    private bool IsResonant(OnsetFeatures onset) =>
+        onset.MidShare >= ResonantMinimumMidShare
+        && onset.MidTonalShare >= 2 * _options.PercussionMinimumTonalShare
+        && !IsSideStick(onset);
+
     /// <summary>Which non-cymbal drum at this onset also makes high-end noise.</summary>
     private DrumKind? Carrier(OnsetFeatures onset)
     {
-        if (IsRide(onset) || IsSideStick(onset))
+        if (IsRide(onset) || IsSideStick(onset) || IsResonant(onset))
         {
             return null;
         }
@@ -367,6 +521,44 @@ public sealed class SpectralHitDetector(IOptions<DetectionOptions> options) : IH
     private static double HatRatio(OnsetFeatures onset) =>
         onset.Hat.Gain / Math.Max(onset.Snare.Gain, 1e-20);
 
+    /// <summary>Log-spaced bands from 40 Hz to 16 kHz (or Nyquist).</summary>
+    private static (int First, int Last)[] FingerprintBands(Spectrogram spectrogram)
+    {
+        var high = Math.Min(FingerprintHighHz, spectrogram.SampleRate / 2.0);
+        var ratio = Math.Pow(high / FingerprintLowHz, 1.0 / FingerprintBandCount);
+        return Enumerable.Range(0, FingerprintBandCount)
+            .Select(b => spectrogram.BinRange(FingerprintLowHz * Math.Pow(ratio, b), FingerprintLowHz * Math.Pow(ratio, b + 1)))
+            .ToArray();
+    }
+
+    /// <summary>
+    /// The power each band gained at the hit, in dB below the hit's strongest band and scaled
+    /// to 0-1 over <see cref="FingerprintRangeDb"/>, so a soft and a loud hit of the same drum
+    /// look alike. Then how long the mids and the top ring, so a closed and an open hat differ.
+    /// </summary>
+    private static float[] Fingerprint(double[][] bandPower, int onset, int next, int halfWindow, OnsetFeatures features)
+    {
+        var gains = bandPower.Select(p =>
+        {
+            var (before, after) = BeforeAfter(p, onset, next, halfWindow);
+            return Math.Max(0, after - before);
+        }).ToArray();
+
+        var loudest = gains.Max();
+        var fingerprint = new float[gains.Length + 2];
+        for (var b = 0; b < gains.Length; b++)
+        {
+            var db = loudest > 0 && gains[b] > 0 ? 10 * Math.Log10(gains[b] / loudest) : -FingerprintRangeDb;
+            fingerprint[b] = (float)Math.Clamp(1 + db / FingerprintRangeDb, 0, 1);
+        }
+
+        // 10 ms reads as 0, 1 s as 1.
+        static float Ring(double milliseconds) => (float)Math.Clamp(Math.Log10(Math.Max(milliseconds, 1) / 10) / 2, 0, 1);
+        fingerprint[^2] = FingerprintDecayWeight * Ring(features.MidDecayMilliseconds);
+        fingerprint[^1] = FingerprintDecayWeight * Ring(features.HatDecayMilliseconds);
+        return fingerprint;
+    }
+
     private (int First, int Last)[] BandRanges(Spectrogram spectrogram)
     {
         var nyquist = spectrogram.SampleRate / 2.0;
@@ -378,7 +570,7 @@ public sealed class SpectralHitDetector(IOptions<DetectionOptions> options) : IH
             spectrogram.BinRange(_options.HatLowHz, Math.Min(_options.HatHighHz, nyquist)),
             spectrogram.BinRange(150, 350),
             spectrogram.BinRange(400, 2000),
-            spectrogram.BinRange(300, 5000),
+            spectrogram.BinRange(MidLowHz, MidHighHz),
             spectrogram.BinRange(2000, Math.Min(9000, nyquist)),
         ];
     }
@@ -496,19 +688,19 @@ public sealed class SpectralHitDetector(IOptions<DetectionOptions> options) : IH
     /// the spectrum around them. Noise (snare, hats, crash) scores near 0 whatever its tilt;
     /// the separate partials of a ride score high.
     /// </summary>
-    private static double TonalShare(Spectrogram spectrogram, (int First, int Last) band, int afterFrame)
+    private static double TonalShare(Spectrogram spectrogram, (int First, int Last) band, int afterFrame, double neighbourhoodHz = RideNeighbourhoodHz)
     {
-        const int Neighbourhood = 8;
+        var neighbourhood = Math.Max(1, (int)Math.Round(neighbourhoodHz / spectrogram.BinHz));
         const float PeakFactor = 4f;
         var after = spectrogram.Magnitude[Math.Clamp(afterFrame, 0, spectrogram.FrameCount - 1)];
-        var window = new float[2 * Neighbourhood + 1];
+        var window = new float[2 * neighbourhood + 1];
         double tonal = 0, total = 0;
 
         for (var k = band.First; k <= band.Last; k++)
         {
 
             var count = 0;
-            for (var j = Math.Max(0, k - Neighbourhood); j <= Math.Min(after.Length - 1, k + Neighbourhood); j++)
+            for (var j = Math.Max(0, k - neighbourhood); j <= Math.Min(after.Length - 1, k + neighbourhood); j++)
             {
                 window[count++] = after[j];
             }

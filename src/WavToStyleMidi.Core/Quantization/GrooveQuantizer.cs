@@ -34,6 +34,12 @@ public sealed class GrooveQuantizer(IOptions<DetectionOptions> options) : IGroov
                 tick = 0;
             }
 
+            // Onsets are found a few ms early, so a downbeat can read as just before the loop starts.
+            if (tick < 0 && tick > -gridTicks / 2.0)
+            {
+                tick = 0;
+            }
+
             if (tick < 0 || tick >= loopTicks)
             {
                 continue;

@@ -21,6 +21,7 @@ internal static class CliArguments
               --grid <number>     Grid: 8, 16, 32, or 12/24 for triplets (default: 16)
               --quantize <0-1>    0 keeps the played feel, 1 snaps fully (default: 1)
               --channel <1-16>    MIDI channel (default: 10)
+              --format <0|1>      MIDI file format; 1 = tempo track + drum track, as style converters need (default: 1)
           -r, --recursive         Include subfolders
           -h, --help              Show this help
         """;
@@ -44,6 +45,7 @@ internal static class CliArguments
         var quantize = 1.0;
         var channel = 10;
         var recursive = false;
+        var format = 1;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -75,6 +77,10 @@ internal static class CliArguments
                 case "--channel":
                     if (!TryNumber(args, ref i, 1, 16, out var c, ref error)) return false;
                     channel = (int)c;
+                    break;
+                case "--format":
+                    if (!TryNumber(args, ref i, 0, 1, out var f, ref error)) return false;
+                    format = (int)f;
                     break;
                 case "-r" or "--recursive":
                     recursive = true;
@@ -118,6 +124,7 @@ internal static class CliArguments
             BeatsPerBar = beats,
             GridDivision = grid,
             QuantizeStrength = quantize,
+            MidiFormat = format,
             MidiChannel = channel,
             Recursive = recursive,
         };

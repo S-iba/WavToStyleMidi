@@ -25,6 +25,18 @@ public sealed class DrumNoteMap
     /// <summary>GM 48, hi-mid tom.</summary>
     public int HighTom { get; set; } = 48;
 
+    public int LowConga { get; set; } = 64;
+    public int OpenHighConga { get; set; } = 63;
+    public int MuteHighConga { get; set; } = 62;
+    public int LowBongo { get; set; } = 61;
+    public int HighBongo { get; set; } = 60;
+    public int LowWoodBlock { get; set; } = 77;
+    public int HighWoodBlock { get; set; } = 76;
+    public int Claves { get; set; } = 75;
+    public int Tambourine { get; set; } = 54;
+    public int Maracas { get; set; } = 70;
+    public int Cabasa { get; set; } = 69;
+
     public int NoteFor(DrumKind kind) => kind switch
     {
         DrumKind.Kick => Kick,
@@ -38,6 +50,17 @@ public sealed class DrumNoteMap
         DrumKind.LowTom => LowTom,
         DrumKind.MidTom => MidTom,
         DrumKind.HighTom => HighTom,
+        DrumKind.LowConga => LowConga,
+        DrumKind.OpenHighConga => OpenHighConga,
+        DrumKind.MuteHighConga => MuteHighConga,
+        DrumKind.LowBongo => LowBongo,
+        DrumKind.HighBongo => HighBongo,
+        DrumKind.LowWoodBlock => LowWoodBlock,
+        DrumKind.HighWoodBlock => HighWoodBlock,
+        DrumKind.Claves => Claves,
+        DrumKind.Tambourine => Tambourine,
+        DrumKind.Maracas => Maracas,
+        DrumKind.Cabasa => Cabasa,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
     };
 }

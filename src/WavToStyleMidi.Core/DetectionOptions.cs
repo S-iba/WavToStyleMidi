@@ -123,6 +123,32 @@ public sealed class DetectionOptions
     /// <summary>On a ride hit, a snare is only added when its 150-350 Hz body is at least this strong against 1-5 kHz.</summary>
     public double RideSnareMinimumBodyRatio { get; set; } = 1.0;
 
+    // ---- Grouping by sound and percussion -------------------------------------------------
+
+    /// <summary>
+    /// Group hits that sound alike, so the same sound always gets the same note, quiet ghost
+    /// notes of a known sound are kept, and percussion gets its own notes.
+    /// </summary>
+    public bool GroupBySound { get; set; } = true;
+
+    /// <summary>
+    /// How different two hits may sound and still be grouped: the average gap between their
+    /// fingerprints, where 0.1 is roughly 4 dB per band. Lower splits more.
+    /// </summary>
+    public double SoundGroupDistance { get; set; } = 0.1;
+
+    /// <summary>A hit the rules did not name is kept only with a jump of at least this many dB, and when its sound repeats.</summary>
+    public double MinimumUnlabelledRiseDb { get; set; } = 12;
+
+    /// <summary>A hit the rules did not name is kept only when the power it adds is within this many dB of the loop's biggest hit.</summary>
+    public double UnlabelledLevelRangeDb { get; set; } = 30;
+
+    /// <summary>Share of 300 Hz-5 kHz power in resonant peaks needed to call a clap, side stick or hat group percussion.</summary>
+    public double PercussionMinimumTonalShare { get; set; } = 0.25;
+
+    /// <summary>A resonant percussion group with at least this share of its power in the hat band is a tambourine.</summary>
+    public double TambourineMinimumHatShare { get; set; } = 0.2;
+
     // ---- Output ---------------------------------------------------------------------------
 
     public int MinimumVelocity { get; set; } = 45;
